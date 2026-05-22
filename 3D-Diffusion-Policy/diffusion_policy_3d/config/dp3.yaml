@@ -17,6 +17,10 @@ dataset_obs_steps: ${n_obs_steps}
 keypoint_visible_rate: 1.0
 obs_as_global_cond: True
 
+encoder_init:
+  checkpoint_path: null
+  freeze: false
+
 policy:
   _target_: diffusion_policy_3d.policy.dp3.DP3
   use_point_crop: true
@@ -81,14 +85,14 @@ dataloader:
   num_workers: 8
   shuffle: True
   pin_memory: True
-  persistent_workers: False
+  persistent_workers: True
 
 val_dataloader:
   batch_size: 128
   num_workers: 8
   shuffle: False
   pin_memory: True
-  persistent_workers: False
+  persistent_workers: True
 
 optimizer:
   _target_: torch.optim.AdamW
@@ -101,10 +105,10 @@ training:
   device: "cuda:0"
   seed: 42
   debug: False
-  resume: True
+  resume: False
   lr_scheduler: cosine
   lr_warmup_steps: 500
-  num_epochs: 3000
+  num_epochs: 1000
   gradient_accumulate_every: 1
   use_ema: True
   rollout_every: 200
@@ -121,12 +125,12 @@ logging:
   mode: online
   name: ${training.seed}
   project: dp3
-  resume: true
+  resume: False
   tags:
   - dp3
 
 checkpoint:
-  save_ckpt: False # if True, save checkpoint every checkpoint_every
+  save_ckpt: True # if True, save checkpoint every checkpoint_every
   topk:
     monitor_key: test_mean_score
     mode: max
