@@ -207,6 +207,7 @@ class DP3Encoder(nn.Module):
                  img_crop_shape=None,
                  out_channel=256,
                  state_mlp_size=(64, 64), state_mlp_activation_fn=nn.ReLU,
+                 goal_mlp_size=(64, 64), goal_mlp_activation_fn=nn.ReLU,
                  pointcloud_encoder_cfg=None,
                  use_pc_color=False,
                  pointnet_type='pointnet',
@@ -214,13 +215,16 @@ class DP3Encoder(nn.Module):
         super().__init__()
         self.imagination_key = 'imagin_robot'
         self.state_key = 'agent_pos'
+        self.goal_key = 'goal'
         self.point_cloud_key = 'point_cloud'
         self.rgb_image_key = 'image'
         self.n_output_channels = out_channel
         
         self.use_imagined_robot = self.imagination_key in observation_space.keys()
+        self.use_goal = self.goal_key in observation_space.keys()
         self.point_cloud_shape = observation_space[self.point_cloud_key]
         self.state_shape = observation_space[self.state_key]
+        self.goal_shape = observation_space[self.goal_key] if self.use_goal else None
         if self.use_imagined_robot:
             self.imagination_shape = observation_space[self.imagination_key]
         else:
@@ -230,6 +234,7 @@ class DP3Encoder(nn.Module):
         
         cprint(f"[DP3Encoder] point cloud shape: {self.point_cloud_shape}", "yellow")
         cprint(f"[DP3Encoder] state shape: {self.state_shape}", "yellow")
+        cprint(f"[DP3Encoder] goal shape: {self.goal_shape}", "yellow")
         cprint(f"[DP3Encoder] imagination point shape: {self.imagination_shape}", "yellow")
         
 
@@ -256,6 +261,20 @@ class DP3Encoder(nn.Module):
 
         self.n_output_channels  += output_dim
         self.state_mlp = nn.Sequential(*create_mlp(self.state_shape[0], output_dim, net_arch, state_mlp_activation_fn))
+        if self.use_goal:
+            if len(goal_mlp_size) == 0:
+                raise RuntimeError(f"Goal mlp size is empty")
+            elif len(goal_mlp_size) == 1:
+                goal_net_arch = []
+            else:
+                goal_net_arch = goal_mlp_size[:-1]
+            goal_output_dim = goal_mlp_size[-1]
+            self.n_output_channels += goal_output_dim
+            self.goal_mlp = nn.Sequential(
+                *create_mlp(self.goal_shape[0], goal_output_dim, goal_net_arch, goal_mlp_activation_fn)
+            )
+        else:
+            self.goal_mlp = None
 
         cprint(f"[DP3Encoder] output dim: {self.n_output_channels}", "red")
 
@@ -273,7 +292,12 @@ class DP3Encoder(nn.Module):
             
         state = observations[self.state_key]
         state_feat = self.state_mlp(state)  # B * 64
-        final_feat = torch.cat([pn_feat, state_feat], dim=-1)
+        feats = [pn_feat, state_feat]
+        if self.use_goal:
+            goal = observations[self.goal_key]
+            goal_feat = self.goal_mlp(goal)
+            feats.append(goal_feat)
+        final_feat = torch.cat(feats, dim=-1)
         return final_feat
 
 

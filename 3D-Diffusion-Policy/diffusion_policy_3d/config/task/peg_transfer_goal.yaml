@@ -1,0 +1,34 @@
+name: peg_transfer_goal
+
+task_name: ${name}
+
+shape_meta: &shape_meta
+  obs:
+    point_cloud:
+      shape: [1024, 3]
+      type: point_cloud
+    agent_pos:
+      shape: [8]
+      type: low_dim
+    goal:
+      shape: [6]
+      type: low_dim
+  action:
+    shape: [8]
+
+env_runner: null
+
+dataset:
+  _target_: diffusion_policy_3d.dataset.peg_transfer_dataset.PegTransferDataset
+  zarr_path: ../../Transfer_Learning/task/peg_transfer/data/output_0520/output_0520/surgflow_block_dvrk_0514_dp3_goal_flow.zarr
+  horizon: ${horizon}
+  n_obs_steps: ${n_obs_steps}
+  pad_before: ${eval:'${n_obs_steps}-1'}
+  pad_after: ${eval:'${n_action_steps}-1'}
+  seed: 42
+  val_ratio: 0.02
+  max_train_episodes: null
+  camera: stereo_left
+  cache_in_memory: true
+  task_name: ${task_name}
+  use_start_end_goal: true

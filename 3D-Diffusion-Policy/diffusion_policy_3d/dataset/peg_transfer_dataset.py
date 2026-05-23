@@ -34,6 +34,7 @@ class PegTransferDataset(BaseDataset):
         camera="camera_1",
         cache_in_memory=True,
         task_name=None,
+        use_start_end_goal=False,
     ):
         super().__init__()
         self.zarr_path = zarr_path
@@ -47,6 +48,7 @@ class PegTransferDataset(BaseDataset):
         self.camera = camera
         self.cache_in_memory = cache_in_memory
         self.task_name = task_name
+        self.use_start_end_goal = use_start_end_goal
 
         root = zarr.open(zarr_path, mode="r")
         data = root["data"]
@@ -56,10 +58,26 @@ class PegTransferDataset(BaseDataset):
             camera_data = data[camera]
             pointcloud_hist = camera_data["pointcloud_hist"]
         else:
+            camera_data = None
             pointcloud_hist = data["pointcloud_hist"]
 
         proprio_hist = data["proprio_hist"]
         actions = data["actions"] if "actions" in data else data["action"]
+        start_end_points = None
+        start_end_points_valid = None
+        if self.use_start_end_goal:
+            if camera_data is None:
+                raise KeyError(
+                    f"use_start_end_goal=True requires data/{camera}/start_end_points, "
+                    f"but camera group {camera!r} was not found."
+                )
+            if "start_end_points" not in camera_data or "start_end_points_valid" not in camera_data:
+                raise KeyError(
+                    f"use_start_end_goal=True requires data/{camera}/start_end_points and "
+                    f"data/{camera}/start_end_points_valid."
+                )
+            start_end_points = np.asarray(camera_data["start_end_points"], dtype=np.float32)
+            start_end_points_valid = np.asarray(camera_data["start_end_points_valid"], dtype=bool)
 
         if cache_in_memory:
             pointcloud_hist = np.asarray(pointcloud_hist, dtype=np.float32)
@@ -80,6 +98,22 @@ class PegTransferDataset(BaseDataset):
         self.point_cloud = pointcloud_hist[:, -self.n_obs_steps :].astype(np.float32)
         self.agent_pos = proprio_hist[:, -self.n_obs_steps :].astype(np.float32)
         self.action = actions.astype(np.float32)
+        self.goal = None
+        self.goal_valid = None
+        if self.use_start_end_goal:
+            if start_end_points.shape[:2] != (len(self.action), 2) or start_end_points.shape[-1] != 3:
+                raise ValueError(
+                    "Expected start_end_points shape (N, 2, 3), got "
+                    f"{start_end_points.shape}"
+                )
+            if start_end_points_valid.shape != (len(self.action), 2):
+                raise ValueError(
+                    "Expected start_end_points_valid shape (N, 2), got "
+                    f"{start_end_points_valid.shape}"
+                )
+            goal = start_end_points.reshape(len(self.action), 6).astype(np.float32)
+            self.goal = np.repeat(goal[:, None, :], self.n_obs_steps, axis=1).astype(np.float32)
+            self.goal_valid = start_end_points_valid
 
         if self.action.ndim != 3:
             raise ValueError(f"Expected actions shape (N, H, A), got {self.action.shape}")
@@ -95,6 +129,15 @@ class PegTransferDataset(BaseDataset):
 
         self.indices = train_indices
         self._val_indices = val_indices
+        if self.use_start_end_goal:
+            selected_indices = np.concatenate([self.indices, self._val_indices])
+            invalid_indices = selected_indices[~np.all(self.goal_valid[selected_indices], axis=1)]
+            if len(invalid_indices) > 0:
+                preview = invalid_indices[:10].tolist()
+                raise ValueError(
+                    "Found invalid start_end_points_valid entries for selected samples. "
+                    f"First invalid sample indices: {preview}"
+                )
 
     def _build_sample_episode_ids(self):
         if "sample_frame_indices" not in self._meta or "episode_ends" not in self._meta:
@@ -146,6 +189,8 @@ class PegTransferDataset(BaseDataset):
             "agent_pos": self.agent_pos[self.indices],
             "point_cloud": self.point_cloud[self.indices],
         }
+        if self.use_start_end_goal:
+            data["goal"] = self.goal[self.indices]
         normalizer = LinearNormalizer()
         normalizer.fit(data=data, last_n_dims=1, mode=mode, **kwargs)
         return normalizer
@@ -161,11 +206,15 @@ class PegTransferDataset(BaseDataset):
         agent_pos = self.agent_pos[sample_idx].astype(np.float32)
         action = self.action[sample_idx].astype(np.float32)
 
+        obs = {
+            "point_cloud": point_cloud,
+            "agent_pos": agent_pos,
+        }
+        if self.use_start_end_goal:
+            obs["goal"] = self.goal[sample_idx].astype(np.float32)
+
         data = {
-            "obs": {
-                "point_cloud": point_cloud,
-                "agent_pos": agent_pos,
-            },
+            "obs": obs,
             "action": action,
         }
         return data
